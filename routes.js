@@ -1056,4 +1056,130 @@ router.post('/get-course-names', async (req, res) => {
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
+
+//ดึงประวัติเข้าแอพ
+router.get('/api/user/:idNumber', async (req, res) => {
+    const { idNumber } = req.params;
+    try {
+        // ดึงข้อมูลผู้ใช้
+        const [userRows] = await dbConnection.execute(
+            'SELECT id_number, first_name, last_name, role FROM users WHERE id_number = ?',
+            [idNumber]
+        );
+
+        if (userRows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const user = userRows[0];
+
+        // ดึงข้อมูลการเข้าเรียน
+        const [attendanceRows] = await dbConnection.execute(
+            'SELECT course_code, section, date, status, check_in_time FROM attendance WHERE student_id = ?',
+            [idNumber]
+        );
+
+        res.json({
+            user: user,
+            attendance: attendanceRows
+        });
+    } catch (error) {
+        console.error('Error fetching user data:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+//ดึงชื่อวิชา
+router.get('/api/attendance/:idNumber', async (req, res) => {
+    const { idNumber } = req.params;
+    try {
+        const [attendanceRows] = await dbConnection.execute(
+            `SELECT a.course_code, c.course_name, a.section, a.date, a.status, a.check_in_time 
+             FROM attendance a
+             JOIN courses c ON a.course_code = c.course_code
+             WHERE a.student_id = ?`,
+            [idNumber]
+        );
+
+        res.json(attendanceRows);
+    } catch (error) {
+        console.error('Error fetching attendance data:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+//ดึงการแจ้งเตือน
+router.get('/api/messages', async (req, res) => {
+    try {
+        const [messages] = await dbConnection.execute(`
+            SELECT message, title
+            FROM messages m
+            JOIN users u ON m.teacher_id = u.id_number
+            WHERE u.role = 'teacher'
+        `);
+
+        res.json(messages);  // ส่งข้อมูลในรูปแบบ JSON กลับไป
+    } catch (error) {
+        console.error('Error fetching messages:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Get courses for a student
+router.get('/api/student_courses/:studentId', ifNotLoggedIn, async (req, res) => {
+    const { studentId } = req.params;
+    try {
+      const [courses] = await dbConnection.execute(`
+        SELECT DISTINCT c.course_code, c.course_name
+        FROM enrollments e
+        JOIN courses c ON e.course_code = c.course_code AND e.section = c.section
+        WHERE e.student_id = ?
+      `, [studentId]);
+      res.json(courses);
+    } catch (error) {
+      console.error('Error fetching student courses:', error);
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
+  });
+  
+  // Get messages for specific courses
+router.post('/api/course_messages', ifNotLoggedIn, async (req, res) => {
+    const { courses } = req.body;
+    try {
+      const courseCodes = courses.map(course => course.course_code);
+      const [messages] = await dbConnection.execute(`
+        SELECT m.id, m.teacher_id, m.course_code, c.course_name, m.section, m.message, m.created_at, m.title
+        FROM messages m
+        JOIN courses c ON m.course_code = c.course_code
+        WHERE m.course_code IN (?)
+        ORDER BY m.created_at DESC
+      `, [courseCodes]);
+      res.json(messages);
+    } catch (error) {
+      console.error('Error fetching course messages:', error);
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
+  });
+
+router.get('/api/student_messages/:studentId', async (req, res) => {
+    const { studentId } = req.params;
+    try {
+      const [messages] = await dbConnection.execute(`
+        SELECT m.id, m.title, m.message, m.created_at, 
+               m.course_code, c.course_name, 
+               CONCAT(u.first_name, ' ', u.last_name) AS teacher_name
+        FROM messages m
+        JOIN courses c ON m.course_code = c.course_code AND m.section = c.section
+        JOIN users u ON m.teacher_id = u.id_number
+        JOIN enrollments e ON m.course_code = e.course_code AND m.section = e.section
+        WHERE e.student_id = ?
+        ORDER BY m.created_at DESC
+      `, [studentId]);
+      
+      res.json(messages);
+    } catch (error) {
+      console.error('Error fetching student messages:', error);
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
+  });
 module.exports = router;
